@@ -156,11 +156,11 @@ tags = {
 }
 # Define an AWS EC2 instance resource named "public"
 resource "aws_instance" "public-instance1" {
-  ami           = "ami-0a47852af5dfa6b0f" # Specify the ID of the Amazon Machine Image (AMI) you want to use
+  ami           = "ami-028eb925545f314d6" # Specify the ID of the Amazon Machine Image (AMI) you want to use
   instance_type = "t2.micro"             # Specify the instance type (e.g., t2.micro, t2.small)
-  subnet_id     = "aws_subnet_public1"
+  subnet_id     = aws_subnet.public1.id
   # Specify the key pair for SSH access
-  key_name      = "boslearning"          # Replace with the name of your SSH key pair
+  key_name      = "Azeezkeypair"          # Replace with the name of your SSH key pair
 
   # Define tags for the instance (optional but recommended)
   tags = {
