@@ -16,17 +16,21 @@ resource "aws_internet_gateway" "gw"{
 
 }
 
-resource "aws_subnet" "public1" {
+resource "aws_subnet" "public-subnets" {
+  count = 2
   vpc_id     = aws_vpc.main.id
-  cidr_block = "192.168.0.0/28"
+  availability_zone = element(var.public-az, count.index)
+  cidr_block = element(var.public_subnet_cidr, count.index)
   map_public_ip_on_launch = true
 
+
   tags = {
-    Name = "public1"
+    Name = element(var.public_subnet_names, count.index)
   }
 }
 
-resource "aws_route_table" "public1-rt" {
+resource "aws_route_table" "public-rt" {
+  count = 2
   vpc_id = aws_vpc.main.id
 
   route {
@@ -34,83 +38,62 @@ resource "aws_route_table" "public1-rt" {
     gateway_id = aws_internet_gateway.gw.id
   }
   tags = {
-    Name = "public1-rt"
+    Name = element(var.route-table_names, count.index)
   }
 }
 
-resource "aws_route_table_association" "public1" {
-  subnet_id      = aws_subnet.public1.id
-  route_table_id = aws_route_table.public1-rt.id
+resource "aws_route_table_association" "public" {
+  count = 2
+  subnet_id      = element(aws_subnet.public-subnets.*.id, count.index)
+  route_table_id = element(aws_route_table.public-rt.*.id, count.index)
 }
 
-resource "aws_subnet" "private1" {
+resource "aws_subnet" "private-subnets" {
+  count = 2
   vpc_id     = aws_vpc.main.id
-  cidr_block = "192.168.0.16/28"
+  availability_zone = element(var.private-az, count.index)
+  cidr_block = element(var.private_subnet_cidr, count.index)
   map_public_ip_on_launch = false
 
   tags = {
-    Name = "private1"
+    Name = element(var.private_subnet_names, count.index)
   }
 }
 
 resource "aws_eip" "lb" {
+  count = 2
   
   domain      = "vpc"
 }
 
-resource "aws_nat_gateway" "nat1" {
-  allocation_id = aws_eip.lb.id
-  subnet_id     = aws_subnet.public1.id
-
+resource "aws_nat_gateway" "nat" {
+  count = 2
+  allocation_id = element(aws_eip.lb.*.id, count.index)
+  subnet_id     = element(aws_subnet.public-subnets.*.id, count.index)
   tags = {
-    Name = "nat"
+    Name = element(var.private_nats, count.index)
   }
    depends_on = [aws_internet_gateway.gw]
 }
 
 
-resource "aws_route_table" "private1-rt" {
+resource "aws_route_table" "private-rt" {
+  count =2
   vpc_id = aws_vpc.main.id
-
   route {
     cidr_block = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat1.id
+    nat_gateway_id = element(aws_nat_gateway.nat.*.id,count.index)
   }
   tags = {
-    Name = "private1-rt"
+    Name = element(var.private-route-table_names, count.index)
   }
 }
 
-resource "aws_route_table_association" "private1" {
-  subnet_id      = aws_subnet.private1.id
-  route_table_id = aws_route_table.private1-rt.id
-}
-
-resource "aws_subnet" "public2" {
-  vpc_id     = aws_vpc.main.id
-  cidr_block = "192.168.0.32/28"
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name = "public2"
-  }
-}
-
-resource "aws_route_table" "public2-rt" {
-  vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.gw.id
-  }
-  tags = {
-    Name = "public2-rt"
-  }
-}
-
-resource "aws_route_table_association" "public2" {
-  subnet_id      = aws_subnet.public2.id
-  route_table_id = aws_route_table.public2-rt.id
+resource "aws_route_table_association" "private" {
+  count = 2
+  
+  subnet_id      = element(aws_subnet.private-subnets.*.id, count.index)
+  route_table_id = element(aws_route_table.private-rt.*.id, count.index)
 }
 
 resource "aws_security_group" "sg1" {
@@ -139,7 +122,7 @@ resource "aws_security_group" "sg1" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["2.217.109.100/32"]
+    cidr_blocks = ["80.193.62.172/32"]
   }
  
 egress {
@@ -154,19 +137,86 @@ tags = {
   Name = "my-security-group"
 }
 }
-# Define an AWS EC2 instance resource named "public"
-resource "aws_instance" "public-instance1" {
-  ami           = "ami-028eb925545f314d6" # Specify the ID of the Amazon Machine Image (AMI) you want to use
-  instance_type = "t2.micro"             # Specify the instance type (e.g., t2.micro, t2.small)
-  subnet_id     = aws_subnet.public1.id
-  # Specify the key pair for SSH access
-  key_name      = "Azeezkeypair"          # Replace with the name of your SSH key pair
 
-  # Define tags for the instance (optional but recommended)
+# Application Load Balancer
+resource "aws_lb" "main" {
+  name               = "main-lb-tf"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.sg1.id]
+  subnets            = [for subnet in aws_subnet.public-subnets : subnet.id]
+
+  enable_deletion_protection = false
+
   tags = {
-    Name = "public-instance1"
+    Environment = "production"
   }
 }
 
+# Setting target groups
+resource "aws_lb_target_group" "main" {
+  name     = "tf-main-lb-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+}
+
+# # Target group attachment to an instance
+# resource "aws_lb_target_group_attachment" "main" {
+#   count = 2
+#   target_group_arn = aws_lb_target_group.main.arn
+#   target_id        = element(aws_instance.public-instances.*.id, count.index)
+#   port             = 80
+# }
 
 
+resource "aws_lb_listener" "main" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = aws_acm_certificate.cert.arn
+  
+  default_action {
+    type            = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+}
+# Launch Template
+resource "aws_launch_template" "Azeeztemplate" {
+  name = "Azeeztemplate"
+  image_id = "ami-028eb925545f314d6"
+  instance_initiated_shutdown_behavior = "terminate"
+  instance_market_options {
+    market_type = "spot"
+  }
+  user_data = filebase64("install.sh")
+  instance_type = "t2.micro"
+  monitoring {
+    enabled = true
+  }
+  vpc_security_group_ids = [aws_security_group.sg1.id]
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = {
+      Name = "public-instances"
+    }
+  }
+
+  #user_data = filebase64("${path.module}/install.sh")
+}
+# Auto Scaling group
+resource "aws_autoscaling_group" "ASG1" {
+
+  vpc_zone_identifier = aws_subnet.public-subnets.*.id
+  desired_capacity   = 2
+  max_size           = 2
+  min_size           = 1
+
+  launch_template {
+    id      = aws_launch_template.Azeeztemplate.id
+    version = "$Latest"
+  }
+}
